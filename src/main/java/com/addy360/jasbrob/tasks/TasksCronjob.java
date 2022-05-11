@@ -2,8 +2,8 @@ package com.addy360.jasbrob.tasks;
 
 
 import com.addy360.jasbrob.dto.SystemData;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -12,10 +12,11 @@ import java.util.Date;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class TasksCronjob {
 
-    @Autowired
-    SimpMessagingTemplate simpMessagingTemplate;
+
+    private final SimpMessagingTemplate simpMessagingTemplate;
 
 
     @Scheduled( fixedRate = 1000)
