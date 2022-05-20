@@ -6,12 +6,17 @@ import com.addy360.jasbrob.dto.Welcome;
 import com.addy360.jasbrob.tasks.TasksCronjob;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
 @RestController
 @Slf4j
@@ -21,24 +26,33 @@ public class HomeController {
 
     @MessageMapping("/hi")
     @SendTo("/message/greetings")
-    public Welcome index(Message message){
-        return new Welcome("Your message was : "+ message.getMessage());
+    public Welcome index(Message message) {
+        return new Welcome("Your message was : " + message.getMessage());
     }
 
     @MessageMapping("/sys")
     @SendTo("/message/system/info")
-    public SystemData systemData(){
+    public SystemData systemData() {
 
         Runtime runtime = Runtime.getRuntime();
         SystemData data = new SystemData(
                 runtime.availableProcessors(),
-                runtime.freeMemory()/(1024 * 1024),
-                runtime.maxMemory()/(1024 * 1024),
-                runtime.totalMemory()/(1024 * 1024),
+                runtime.freeMemory() / (1024 * 1024),
+                runtime.maxMemory() / (1024 * 1024),
+                runtime.totalMemory() / (1024 * 1024),
                 new Date(System.currentTimeMillis())
         );
         log.info("system data was triggered, sending data : {}", data);
         return data;
+    }
+
+    @GetMapping("/report/{format}")
+    public ResponseEntity getReports(@PathVariable String format) {
+        return ResponseEntity.ok(new HashMap() {
+            {
+                put("message", format);
+            }
+        });
     }
 
 }
