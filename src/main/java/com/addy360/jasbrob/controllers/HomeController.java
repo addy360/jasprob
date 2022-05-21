@@ -13,8 +13,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.jasperreports.engine.*;
 import net.sf.jasperreports.engine.data.JRBeanCollectionDataSource;
+import net.sf.jasperreports.engine.export.JRXlsExporter;
+import net.sf.jasperreports.engine.export.ooxml.JRXlsxExporter;
+import net.sf.jasperreports.export.SimpleExporterInput;
+import net.sf.jasperreports.export.SimpleOutputStreamExporterOutput;
+import net.sf.jasperreports.export.SimpleXlsExporterConfiguration;
+import net.sf.jasperreports.export.SimpleXlsxReportConfiguration;
 import org.apache.tomcat.jni.Local;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -25,12 +32,12 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -80,9 +87,13 @@ public class HomeController {
     @GetMapping("/comments")
     public ResponseEntity<byte[]> getCommentReport() {
         byte[] bytes = commentsReport();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(new MediaType("application","force-download"));
+        headers.set(HttpHeaders.CONTENT_DISPOSITION,"attachment; filename=comments.xlsx");
         return ResponseEntity
                 .ok()
-                .contentType(MediaType.APPLICATION_PDF)
+                .headers(headers)
                 .body(bytes);
     }
 
@@ -113,16 +124,36 @@ public class HomeController {
         JasperReport report;
         JasperPrint print;
         try {
+
             report = JasperCompileManager.compileReport(stream);
             Map<String, Object> params = new HashMap<>();
             params.put("comments", source);
             print = JasperFillManager.fillReport(report, params, new JREmptyDataSource());
-            return JasperExportManager.exportReportToPdf(print);
+
+            File tempFile = getExcelFile(print);
+            log.info("Excel file is : {} with size : {}", tempFile.getAbsolutePath(), tempFile.getTotalSpace());
+
+//            return JasperExportManager.exportReportToPdf(print);
+            return Files.readAllBytes(tempFile.toPath());
         } catch (Exception e) {
             log.info("Failed to compile report with error : {}", e.getMessage());
             return null;
         }
 
+    }
+
+    private File getExcelFile(JasperPrint print) throws IOException, JRException {
+        File tempFile = File.createTempFile("file", ".xlsx");
+        JRXlsxExporter exporter = new JRXlsxExporter();
+        exporter.setExporterInput(new SimpleExporterInput(print));
+        exporter.setExporterOutput(new SimpleOutputStreamExporterOutput(tempFile));
+        SimpleXlsxReportConfiguration configuration = new SimpleXlsxReportConfiguration();
+        //configuration.setOnePagePerSheet(true);
+        configuration.setDetectCellType(true);
+        configuration.setCollapseRowSpan(false);
+        exporter.setConfiguration(configuration);
+        exporter.exportReport();
+        return tempFile;
     }
 
     private byte[] postReport() {
