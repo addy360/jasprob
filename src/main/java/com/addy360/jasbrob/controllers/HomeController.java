@@ -3,6 +3,7 @@ package com.addy360.jasbrob.controllers;
 import com.addy360.jasbrob.dto.Message;
 import com.addy360.jasbrob.dto.SystemData;
 import com.addy360.jasbrob.dto.Welcome;
+import com.addy360.jasbrob.models.Post;
 import com.addy360.jasbrob.models.Student;
 import com.addy360.jasbrob.tasks.TasksCronjob;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -11,10 +12,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.jasperreports.engine.*;
 import net.sf.jasperreports.engine.data.JRBeanCollectionDataSource;
+import org.apache.tomcat.jni.Local;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,6 +30,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @RestController
@@ -60,40 +61,47 @@ public class HomeController {
         return data;
     }
 
-    @GetMapping(value = "/report/{format}", produces = MediaType.APPLICATION_PDF_VALUE)
+    @GetMapping(value = "/report/{type}", produces = MediaType.APPLICATION_PDF_VALUE)
     public @ResponseBody
-    byte[] getReports(@PathVariable String format) {
-        String url = "https://jsonplaceholder.typicode.com/users";
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url));
-        HttpRequest request = builder.GET().build();
-        HttpClient httpClient = HttpClient.newHttpClient();
-
-        try {
-            List<Student> students = fetchStudents();
-
-            return generateReport(students, format);
-        } catch (Exception e) {
-            return null;
+    byte[] getReports(@PathVariable String type) {
+        switch (type) {
+            case "students":
+                return studentReport();
+            case "posts":
+                return postReport();
+            default:
+                return null;
         }
-
 
     }
 
-
-    private byte[] generateReport(List<Student> students, String format) {
+    private byte[] studentReport() {
         try {
-            InputStream stream = getClass().getClassLoader().getResourceAsStream("reports/students.jrxml");
-            log.info("Resource loaded : {}", stream);
-            JRBeanCollectionDataSource data = new JRBeanCollectionDataSource(students);
+            List<Student> students = fetchStudents();
+            return generateReport(students);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
-            JasperReport report = JasperCompileManager.compileReport(stream);
+    private byte[] postReport() {
+        try {
+            List<Post> posts = fetchPosts();
+            return generatePostReport(posts);
+        } catch (Exception e) {
+            log.info("Error while loading posts report: {}",e.getMessage());
+            return null;
+        }
+    }
 
-            Map<String, Object> params = new HashMap<>();
-            params.put("students", data);
-            log.info("Compiled file {}", report);
+    private byte[] generatePostReport(List<Post> posts) throws JRException {
+        return getReportPostsBytes(posts);
+    }
 
-            JasperPrint jasperPrint = JasperFillManager.fillReport(report, params, new JREmptyDataSource());
-            return JasperExportManager.exportReportToPdf(jasperPrint);
+
+    private byte[] generateReport(List<Student> students) {
+        try {
+            return getReportStudentBytes(students);
 
         } catch (Exception e) {
             log.info("Error while generating report : {}", e.getMessage());
@@ -101,14 +109,81 @@ public class HomeController {
         return new byte[0];
     }
 
+    private byte[] getReportStudentBytes(List<Student> objectList) throws JRException {
+        String dir = "reports/";
+        String file = dir.concat("students").concat(".jrxml");
+        InputStream stream = getClass().getClassLoader().getResourceAsStream(file);
+        log.info("Resource loaded file : {} : {}", file, stream);
+        JRBeanCollectionDataSource data = new JRBeanCollectionDataSource(objectList);
+
+        JasperReport report = JasperCompileManager.compileReport(stream);
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("students", data);
+        log.info("Compiled file {}", report);
+
+        JasperPrint jasperPrint = JasperFillManager.fillReport(report, params, new JREmptyDataSource());
+        return JasperExportManager.exportReportToPdf(jasperPrint);
+    }
+
+    private byte[] getReportPostsBytes(List<Post> posts) throws JRException {
+        String dir = "reports/";
+        String file = dir.concat("posts").concat(".jrxml");
+        InputStream stream = getClass().getClassLoader().getResourceAsStream(file);
+        JRBeanCollectionDataSource source = new JRBeanCollectionDataSource(posts);
+
+        JasperReport report = JasperCompileManager.compileReport(stream);
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("posts", source);
+        params.put("pageTitle", LocalDateTime.now().format(DateTimeFormatter.ISO_DATE));
+        JasperPrint jasperPrint = JasperFillManager.fillReport(report, params, new JREmptyDataSource());
+        return JasperExportManager.exportReportToPdf(jasperPrint);
+    }
+
     private List<Student> fetchStudents() throws IOException, InterruptedException {
         String url = "https://jsonplaceholder.typicode.com/users";
         log.info("Response for \n{}", url);
+        HttpResponse<String> response = getResponse(url);
+        return handleResponse(response);
+    }
+
+    List<Post> fetchPosts() throws IOException, InterruptedException {
+        String url = "https://jsonplaceholder.typicode.com/posts";
+        log.info("Sending request to : {}", url);
+        HttpResponse<String> response = getResponse(url);
+        return handlePostResponse(response);
+    }
+
+    private List<Post> handlePostResponse(HttpResponse<String> response) {
+        List<Post> posts = new ArrayList<>();
+        ObjectMapper om = new ObjectMapper();
+        JsonNode jsonNode;
+        try {
+            jsonNode = om.readTree(response.body());
+            jsonNode.forEach(jn -> {
+                String id = jn.get("id").asText();
+                String title = jn.get("title").asText();
+                String body = jn.get("body").asText();
+                Post post = new Post();
+                post.setBody(body);
+                post.setId(Long.parseLong(id));
+                post.setTitle(title);
+                posts.add(post);
+            });
+            log.info("Posts fetched are : {}",posts);
+        } catch (JsonProcessingException e) {
+            log.info("Error while loading response : {}", e.getMessage());
+            return posts;
+        }
+        return posts;
+    }
+
+    private HttpResponse<String> getResponse(String url) throws IOException, InterruptedException {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url));
         HttpRequest request = builder.GET().build();
         HttpClient httpClient = HttpClient.newHttpClient();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        return handleResponse(response);
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     private List<Student> handleResponse(HttpResponse<String> stringHttpResponse) {
