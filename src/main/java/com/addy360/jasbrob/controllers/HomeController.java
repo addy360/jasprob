@@ -3,6 +3,7 @@ package com.addy360.jasbrob.controllers;
 import com.addy360.jasbrob.dto.Message;
 import com.addy360.jasbrob.dto.SystemData;
 import com.addy360.jasbrob.dto.Welcome;
+import com.addy360.jasbrob.models.Comment;
 import com.addy360.jasbrob.models.Post;
 import com.addy360.jasbrob.models.Student;
 import com.addy360.jasbrob.tasks.TasksCronjob;
@@ -15,6 +16,7 @@ import net.sf.jasperreports.engine.data.JRBeanCollectionDataSource;
 import org.apache.tomcat.jni.Local;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -75,6 +77,15 @@ public class HomeController {
 
     }
 
+    @GetMapping("/comments")
+    public ResponseEntity<byte[]> getCommentReport() {
+        byte[] bytes = commentsReport();
+        return ResponseEntity
+                .ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(bytes);
+    }
+
     private byte[] studentReport() {
         try {
             List<Student> students = fetchStudents();
@@ -84,12 +95,42 @@ public class HomeController {
         }
     }
 
+    private byte[] commentsReport() {
+        List<Comment> comments;
+        try {
+            comments = fetchComments();
+        } catch (Exception e) {
+            log.info("Error occurred while fetching comments : {}", e.getMessage());
+            return null;
+        }
+        log.info("Comments {} loaded", comments.size());
+
+        String dir = "reports/";
+        String file = dir.concat("comments.jrxml");
+
+        InputStream stream = getClass().getClassLoader().getResourceAsStream(file);
+        JRBeanCollectionDataSource source = new JRBeanCollectionDataSource(comments);
+        JasperReport report;
+        JasperPrint print;
+        try {
+            report = JasperCompileManager.compileReport(stream);
+            Map<String, Object> params = new HashMap<>();
+            params.put("comments", source);
+            print = JasperFillManager.fillReport(report, params, new JREmptyDataSource());
+            return JasperExportManager.exportReportToPdf(print);
+        } catch (Exception e) {
+            log.info("Failed to compile report with error : {}", e.getMessage());
+            return null;
+        }
+
+    }
+
     private byte[] postReport() {
         try {
             List<Post> posts = fetchPosts();
             return generatePostReport(posts);
         } catch (Exception e) {
-            log.info("Error while loading posts report: {}",e.getMessage());
+            log.info("Error while loading posts report: {}", e.getMessage());
             return null;
         }
     }
@@ -148,6 +189,25 @@ public class HomeController {
         return handleResponse(response);
     }
 
+    private List<Comment> fetchComments() throws Exception {
+        String url = "https://jsonplaceholder.typicode.com/comments";
+        List<Comment> comments = new ArrayList<>();
+
+        HttpResponse<String> response = getResponse(url);
+        log.info("Response for : {} is : {}", url, response.statusCode());
+        ObjectMapper om = new ObjectMapper();
+        JsonNode jsonNode = om.readTree(response.body());
+        jsonNode.forEach(cm -> {
+            Comment comment = new Comment();
+            comment.setBody(cm.get("body").asText());
+            comment.setName(cm.get("name").asText());
+            comment.setEmail(cm.get("email").asText());
+            comments.add(comment);
+        });
+
+        return comments;
+    }
+
     List<Post> fetchPosts() throws IOException, InterruptedException {
         String url = "https://jsonplaceholder.typicode.com/posts";
         log.info("Sending request to : {}", url);
@@ -171,7 +231,7 @@ public class HomeController {
                 post.setTitle(title);
                 posts.add(post);
             });
-            log.info("Posts fetched are : {}",posts);
+            log.info("Posts fetched are : {}", posts);
         } catch (JsonProcessingException e) {
             log.info("Error while loading response : {}", e.getMessage());
             return posts;
