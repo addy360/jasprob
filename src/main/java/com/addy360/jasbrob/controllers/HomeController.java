@@ -13,13 +13,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.jasperreports.engine.*;
 import net.sf.jasperreports.engine.data.JRBeanCollectionDataSource;
-import net.sf.jasperreports.engine.export.JRXlsExporter;
 import net.sf.jasperreports.engine.export.ooxml.JRXlsxExporter;
 import net.sf.jasperreports.export.SimpleExporterInput;
 import net.sf.jasperreports.export.SimpleOutputStreamExporterOutput;
-import net.sf.jasperreports.export.SimpleXlsExporterConfiguration;
 import net.sf.jasperreports.export.SimpleXlsxReportConfiguration;
-import org.apache.tomcat.jni.Local;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -28,7 +25,6 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 
 
@@ -70,14 +66,16 @@ public class HomeController {
         return data;
     }
 
-    @GetMapping(value = "/report/{type}", produces = MediaType.APPLICATION_PDF_VALUE)
-    public @ResponseBody
-    byte[] getReports(@PathVariable String type) {
+    @GetMapping(value = "/report/{type}/{format}", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<byte[]> getReports(@PathVariable String type, @PathVariable String format) {
+        String filename = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).concat(".").concat(format);
+        HttpHeaders headers = getFileHttpHeaders(filename);
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok().headers(headers);
         switch (type) {
             case "students":
-                return studentReport();
+                return builder.body(studentReport(format));
             case "posts":
-                return postReport();
+                return builder.body(postReport(format));
             default:
                 return null;
         }
@@ -88,19 +86,25 @@ public class HomeController {
     public ResponseEntity<byte[]> getCommentReport() {
         byte[] bytes = commentsReport();
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(new MediaType("application","force-download"));
-        headers.set(HttpHeaders.CONTENT_DISPOSITION,"attachment; filename=comments.xlsx");
+        String filename = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME).concat(".xlsx");
+        HttpHeaders headers = getFileHttpHeaders(filename);
         return ResponseEntity
                 .ok()
                 .headers(headers)
                 .body(bytes);
     }
 
-    private byte[] studentReport() {
+    private HttpHeaders getFileHttpHeaders(String filename) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(new MediaType("application", "force-download"));
+        headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=".concat(filename));
+        return headers;
+    }
+
+    private byte[] studentReport(String format) {
         try {
             List<Student> students = fetchStudents();
-            return generateReport(students);
+            return generateReport(students, format);
         } catch (Exception e) {
             return null;
         }
@@ -156,24 +160,24 @@ public class HomeController {
         return tempFile;
     }
 
-    private byte[] postReport() {
+    private byte[] postReport(String format) {
         try {
             List<Post> posts = fetchPosts();
-            return generatePostReport(posts);
+            return generatePostReport(posts, format);
         } catch (Exception e) {
             log.info("Error while loading posts report: {}", e.getMessage());
             return null;
         }
     }
 
-    private byte[] generatePostReport(List<Post> posts) throws JRException {
-        return getReportPostsBytes(posts);
+    private byte[] generatePostReport(List<Post> posts, String format) throws Exception {
+        return getReportPostsBytes(posts, format);
     }
 
 
-    private byte[] generateReport(List<Student> students) {
+    private byte[] generateReport(List<Student> students, String format) {
         try {
-            return getReportStudentBytes(students);
+            return getReportStudentBytes(students, format);
 
         } catch (Exception e) {
             log.info("Error while generating report : {}", e.getMessage());
@@ -181,7 +185,7 @@ public class HomeController {
         return new byte[0];
     }
 
-    private byte[] getReportStudentBytes(List<Student> objectList) throws JRException {
+    private byte[] getReportStudentBytes(List<Student> objectList, String format) throws Exception {
         String dir = "reports/";
         String file = dir.concat("students").concat(".jrxml");
         InputStream stream = getClass().getClassLoader().getResourceAsStream(file);
@@ -195,10 +199,16 @@ public class HomeController {
         log.info("Compiled file {}", report);
 
         JasperPrint jasperPrint = JasperFillManager.fillReport(report, params, new JREmptyDataSource());
-        return JasperExportManager.exportReportToPdf(jasperPrint);
+        if (format.equalsIgnoreCase("pdf"))
+            return JasperExportManager.exportReportToPdf(jasperPrint);
+        if (format.equalsIgnoreCase("xlsx")) {
+            File excelFile = getExcelFile(jasperPrint);
+            return Files.readAllBytes(excelFile.toPath());
+        }
+        return null;
     }
 
-    private byte[] getReportPostsBytes(List<Post> posts) throws JRException {
+    private byte[] getReportPostsBytes(List<Post> posts, String format) throws Exception {
         String dir = "reports/";
         String file = dir.concat("posts").concat(".jrxml");
         InputStream stream = getClass().getClassLoader().getResourceAsStream(file);
@@ -210,7 +220,13 @@ public class HomeController {
         params.put("posts", source);
         params.put("pageTitle", LocalDateTime.now().format(DateTimeFormatter.ISO_DATE));
         JasperPrint jasperPrint = JasperFillManager.fillReport(report, params, new JREmptyDataSource());
-        return JasperExportManager.exportReportToPdf(jasperPrint);
+        if (format.equalsIgnoreCase("pdf"))
+            return JasperExportManager.exportReportToPdf(jasperPrint);
+        if (format.equalsIgnoreCase("xlsx")) {
+            File excelFile = getExcelFile(jasperPrint);
+            return Files.readAllBytes(excelFile.toPath());
+        }
+        return null;
     }
 
     private List<Student> fetchStudents() throws IOException, InterruptedException {
